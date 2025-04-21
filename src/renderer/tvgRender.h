@@ -50,7 +50,6 @@ static inline RenderUpdateFlag operator|(const RenderUpdateFlag a, const RenderU
     return RenderUpdateFlag(uint16_t(a) | uint16_t(b));
 }
 
-
 struct RenderSurface
 {
     union {
@@ -103,6 +102,47 @@ struct RenderRegion
     {
         if (x == rhs.x && y == rhs.y && w == rhs.w && h == rhs.h) return true;
         return false;
+    }
+};
+
+struct DirtyRegion
+{
+    struct {
+        int32_t x, y;
+    } min;
+
+    struct {
+        int32_t x, y;
+    } max;
+};
+
+struct RenderDirtyRegion
+{
+    Array<DirtyRegion> sets[2];  //swap mechanism like sets[active];
+    uint8_t active = 0;
+
+    const Array<DirtyRegion>& get() const
+    {
+        return sets[active];
+    }
+
+    void add(const DirtyRegion& region)
+    {
+        return sets[!active].push(region);
+    }
+
+    bool prepare()
+    {
+        return true;
+    }
+
+    bool commit()
+    {
+        active = !active;
+
+        //TODO: essential merge rect?
+
+        return true;
     }
 };
 
@@ -353,7 +393,7 @@ struct RenderEffectTint : RenderEffect
         inst->white[0] = va_arg(args, int);
         inst->white[1] = va_arg(args, int);
         inst->white[2] = va_arg(args, int);
-        inst->intensity = (uint8_t)(va_arg(args, double) * 2.55);
+        inst->intensity = (uint8_t)(static_cast<float>(va_arg(args, double)) * 2.55f);
         inst->type = SceneEffect::Tint;
         return inst;
     }
@@ -384,8 +424,9 @@ struct RenderEffectTritone : RenderEffect
 
 class RenderMethod
 {
-private:
-    uint32_t refCnt = 0;        //reference count
+protected:
+    RenderDirtyRegion dirtyRegion;
+    uint32_t refCnt = 0;
     Key key;
 
 public:

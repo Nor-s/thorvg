@@ -41,7 +41,7 @@ struct SwTask : Task
 {
     SwSurface* surface = nullptr;
     SwMpool* mpool = nullptr;
-    SwBBox bbox;                          //Rendering Region
+    SwBBox bbox;                     //Rendering Region
     Matrix transform;
     Array<RenderData> clips;
     RenderUpdateFlag flags = RenderUpdateFlag::None;
@@ -364,6 +364,19 @@ bool SwRenderer::postUpdate()
 
 bool SwRenderer::preRender()
 {
+    printf("pre render ----------------------------------------\n");
+
+    //collect dirty regions
+    ARRAY_FOREACH(p, tasks) {
+        auto task = *p;
+        task->done();
+        auto& bbox = task->bbox;
+        printf("dirty region: (%d %d), (%d %d)\n", bbox.min.x, bbox.min.y, bbox.max.x, bbox.max.y);
+        dirtyRegion.add({{bbox.min.x, bbox.min.y}, {bbox.max.x, bbox.max.y}});
+    }
+
+    dirtyRegion.commit();
+
     return true;
 }
 
