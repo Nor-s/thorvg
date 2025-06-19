@@ -267,7 +267,7 @@ struct Window
             auto ctime = SDL_GetTicks();
             example->elapsed += (ctime - ptime);
             tickCnt++;
-            if (print) printf("[%5d]: elapsed time = %dms (%dms)\n", tickCnt, (ctime - ptime), (example->elapsed / tickCnt));
+            // if (print) printf("[%5d]: elapsed time = %dms (%dms)\n", tickCnt, (ctime - ptime), (example->elapsed / tickCnt));
             ptime = ctime;
         }
     }

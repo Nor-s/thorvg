@@ -46,8 +46,8 @@ struct AASpans
 };
 
 //Careful! Shared resource, No support threading
-static float dudx, dvdx;
-static float dxdya, dxdyb, dudya, dvdya;
+static float dudx, dvdx, dudy, dvdy;
+static float dxdya, dxdyb, dudya, dvdya, gdvdy, gdudy;
 static float xa, xb, ua, va;
 
 
@@ -184,6 +184,13 @@ static void _rasterPolygonImageSegment(SwSurface* surface, const SwImage& image,
     if (yEnd > bbox.max.y) yEnd = bbox.max.y;
 
     y = yStart;
+    printf("\n===========================================================\n");
+    printf("TEXTURE xa: %f, xb: %f, u: %f, v:%f \n", xa, xb,ua, va);
+    printf("TEXTURE _dxdya  %f  _dxdyb %f  _dudya %f  _dvdya %f \n" , _dxdya, _dxdyb,_dudya, _dvdya);
+    printf("_dudx %f _dvdx %f \n", _dudx, _dvdx);
+
+        printf("yStart %d yEnd %d   \n",yStart, yEnd );
+        printf("bboxminx %d bboxmaxx %d   \n",bbox.min.x, bbox.max.x );
 
     while (y < yEnd) {
         x1 = std::max((int32_t)_xa, bbox.min.x);
@@ -200,22 +207,29 @@ static void _rasterPolygonImageSegment(SwSurface* surface, const SwImage& image,
         if ((x2 - x1) >= 1 && (x1 < bbox.max.x) && (x2 > bbox.min.x)) {
 
             //Perform subtexel pre-stepping on UV
-            dx = 1 - (_xa - x1);
+            dx = 0.5 - (_xa - x1);
             u = _ua + dx * _dudx;
-            v = _va + dx * _dvdx;
+            v = _va + dx * _dvdx; 
             buf = dbuf + ((y * surface->stride) + x1);
             x = x1;
 
             if (matting) cmp = &surface->compositor->image.buf8[(y * surface->compositor->image.stride + x1) * csize];
 
             const auto fullOpacity = (opacity == 255);
+            printf("x1: %d, x2: %d _xa %f, _xb %f dx: %f, u: %f, v: %f x: %d | ",x1,x2,_xa,_xb,dx,u,v,x);
 
             //Draw horizontal line
             while (x++ < x2) {
                 uu = (int) u;
                 vv = (int) v;
 
-                if ((uint32_t) uu >= image.w || (uint32_t) vv >= image.h) continue;
+                if ((uint32_t) uu >= image.w || (uint32_t) vv >= image.h) 
+            {
+                printf("skip: u %f v %f dx %f UU: %d VV: %d x: %d y: %d \n",u,v,dx, uu, vv, x, y);
+                 u += _dudx;
+                v += _dvdx;
+                continue;
+            }
 
                 ar = _modf(u);
                 ab = _modf(v);
@@ -259,6 +273,11 @@ static void _rasterPolygonImageSegment(SwSurface* surface, const SwImage& image,
                 v += _dvdx;
             }
         }
+        // else 
+        {
+            // printf("\nskip: u %f v %f dx %f  x: %d y: %d \n",u,v,dx,  x, y);
+
+        }
 
         //Step along both edges
         _xa += _dxdya;
@@ -272,14 +291,16 @@ static void _rasterPolygonImageSegment(SwSurface* surface, const SwImage& image,
     xb = _xb;
     ua = _ua;
     va = _va;
+    printf("\n===========================================================\n");
 }
 
 
 /* This mapping algorithm is based on Mikael Kalms's. */
 static void _rasterPolygonImage(SwSurface* surface, const SwImage& image, const RenderRegion& bbox, Polygon& polygon, AASpans* aaSpans, uint8_t opacity)
 {
-    float x[3] = {polygon.vertex[0].pt.x, polygon.vertex[1].pt.x, polygon.vertex[2].pt.x};
-    float y[3] = {polygon.vertex[0].pt.y, polygon.vertex[1].pt.y, polygon.vertex[2].pt.y};
+    float shift = 0.0f;
+    float x[3] = {polygon.vertex[0].pt.x+shift, polygon.vertex[1].pt.x+shift, polygon.vertex[2].pt.x+shift};
+    float y[3] = {polygon.vertex[0].pt.y+shift, polygon.vertex[1].pt.y+shift, polygon.vertex[2].pt.y+shift};
     float u[3] = {polygon.vertex[0].uv.x, polygon.vertex[1].uv.x, polygon.vertex[2].uv.x};
     float v[3] = {polygon.vertex[0].uv.y, polygon.vertex[1].uv.y, polygon.vertex[2].uv.y};
 
@@ -323,8 +344,8 @@ static void _rasterPolygonImage(SwSurface* surface, const SwImage& image, const 
     denom = 1 / denom;   //Reciprocal for speeding up
     dudx = ((u[2] - u[0]) * (y[1] - y[0]) - (u[1] - u[0]) * (y[2] - y[0])) * denom;
     dvdx = ((v[2] - v[0]) * (y[1] - y[0]) - (v[1] - v[0]) * (y[2] - y[0])) * denom;
-    auto dudy = ((u[1] - u[0]) * (x[2] - x[0]) - (u[2] - u[0]) * (x[1] - x[0])) * denom;
-    auto dvdy = ((v[1] - v[0]) * (x[2] - x[0]) - (v[2] - v[0]) * (x[1] - x[0])) * denom;
+    dudy = ((u[1] - u[0]) * (x[2] - x[0]) - (u[2] - u[0]) * (x[1] - x[0])) * denom;
+    dvdy = ((v[1] - v[0]) * (x[2] - x[0]) - (v[2] - v[0]) * (x[1] - x[0])) * denom;
 
     //Calculate X-slopes along the edges
     if (y[1] > y[0]) dxdy[0] = (x[1] - x[0]) / (y[1] - y[0]);
@@ -340,18 +361,23 @@ static void _rasterPolygonImage(SwSurface* surface, const SwImage& image, const 
     auto compositing = _compositing(surface);   //Composition required
     auto blending = _blending(surface);         //Blending required
 
+    gdvdy = dvdy;
+    gdudy = dudy;
+    float ps=0.5f;
+
     //Longer edge is on the left side
     if (!side) {
         //Calculate slopes along left edge
         dxdya = dxdy[1];
         dudya = dxdya * dudx + dudy;
         dvdya = dxdya * dvdx + dvdy;
-
+        
         //Perform subpixel pre-stepping along left edge
-        auto dy = 1.0f - (y[0] - yi[0]);
+        auto dy = ps - (y[0] - yi[0]);
         xa = x[0] + dy * dxdya;
         ua = u[0] + dy * dudya;
         va = v[0] + dy * dvdya;
+        printf("not side-____\n");
 
         //Draw upper segment if possibly visible
         if (yi[0] < yi[1]) {
@@ -360,6 +386,7 @@ static void _rasterPolygonImage(SwSurface* surface, const SwImage& image, const 
             ua += (off_y * dudya);
             va += (off_y * dvdya);
 
+        printf("upper-____\n");
             // Set right edge X-slope and perform subpixel pre-stepping
             dxdyb = dxdy[0];
             xb = x[0] + dy * dxdyb + (off_y * dxdyb);
@@ -376,6 +403,7 @@ static void _rasterPolygonImage(SwSurface* surface, const SwImage& image, const 
         }
         //Draw lower segment if possibly visible
         if (yi[1] < yi[2]) {
+        printf("lower-____\n");
             off_y = y[1] < bbox.min.y ? (bbox.min.y - y[1]) : 0;
             if (!upper) {
                 xa += (off_y * dxdya);
@@ -384,7 +412,7 @@ static void _rasterPolygonImage(SwSurface* surface, const SwImage& image, const 
             }
             // Set right edge X-slope and perform subpixel pre-stepping
             dxdyb = dxdy[2];
-            xb = x[1] + (1 - (y[1] - yi[1])) * dxdyb + (off_y * dxdyb);
+            xb = x[1] + (ps - (y[1] - yi[1])) * dxdyb + (off_y * dxdyb);
             if (compositing) {
                 if (_matting(surface)) _rasterPolygonImageSegment(surface, image, bbox, yi[1], yi[2], aaSpans, opacity, true);
                 else _rasterMaskedPolygonImageSegment(surface, image, bbox, yi[1], yi[2], aaSpans, opacity, 2);
@@ -396,13 +424,15 @@ static void _rasterPolygonImage(SwSurface* surface, const SwImage& image, const 
         }
     //Longer edge is on the right side
     } else {
+        printf("side-____\n");
         //Set right edge X-slope and perform subpixel pre-stepping
         dxdyb = dxdy[1];
-        auto dy = 1.0f - (y[0] - yi[0]);
+        auto dy = ps - (y[0] - yi[0]);
         xb = x[0] + dy * dxdyb;
 
         //Draw upper segment if possibly visible
         if (yi[0] < yi[1]) {
+        printf("upper-____\n");
             off_y = y[0] < bbox.min.y ? (bbox.min.y - y[0]) : 0;
             xb += (off_y *dxdyb);
 
@@ -427,6 +457,7 @@ static void _rasterPolygonImage(SwSurface* surface, const SwImage& image, const 
         }
         //Draw lower segment if possibly visible
         if (yi[1] < yi[2]) {
+        printf("lower-____\n");
             off_y = y[1] < bbox.min.y ? (bbox.min.y - y[1]) : 0;
             if (!upper) xb += (off_y *dxdyb);
 
@@ -434,7 +465,7 @@ static void _rasterPolygonImage(SwSurface* surface, const SwImage& image, const 
             dxdya = dxdy[2];
             dudya = dxdya * dudx + dudy;
             dvdya = dxdya * dvdx + dvdy;
-            dy = 1 - (y[1] - yi[1]);
+            dy = ps - (y[1] - yi[1]);
             xa = x[1] + dy * dxdya + (off_y * dxdya);
             ua = u[1] + dy * dudya + (off_y * dudya);
             va = v[1] + dy * dvdya + (off_y * dvdya);
